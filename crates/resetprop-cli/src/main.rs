@@ -4,8 +4,9 @@ use std::process::ExitCode;
 
 use resetprop::{PersistStore, PropSystem};
 
-const EXPECTED_FRAMEWORK_SHA256: Option<&str> = option_env!("RESETPROP_FRAMEWORK_SHA256");
+include!(concat!(env!("OUT_DIR"), "/framework_gate.rs"));
 const OBF_KEY: u8 = 0x5A;
+const OBF_SEED: u8 = 0xA7;
 const OBF_FRAMEWORK_JAR_PATH: &[u8] = &[
     117, 41, 35, 41, 46, 63, 55, 117, 60, 40, 59, 55, 63, 45, 53, 40, 49, 117, 60, 40, 59, 55, 63,
     45, 53, 40, 49, 116, 48, 59, 40,
@@ -16,7 +17,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("resetprop: {e}");
+            eprintln!("hoa: {e}");
             ExitCode::FAILURE
         }
     }
@@ -55,15 +56,15 @@ fn run() -> Result<(), String> {
                 i += 1;
                 delete = Some(arg_val(&args, i, "-d")?);
             }
-            "--hexpatch-delete" => {
+            "--hex-del" => {
                 i += 1;
-                hexpatch = Some(arg_val(&args, i, "--hexpatch-delete")?);
+                hexpatch = Some(arg_val(&args, i, "--hex-del")?);
             }
             "--nuke" | "-nk" => {
                 i += 1;
                 nuke = Some(arg_val(&args, i, "--nuke")?);
             }
-            "--stealth" | "-st" => stealth = true,
+            "--hide" | "-hd" => stealth = true,
             "--compact" => compact = true,
             "--dir" => {
                 i += 1;
@@ -107,7 +108,7 @@ fn run() -> Result<(), String> {
         Some(d) => PropSystem::open_dir(Path::new(d)),
         None => PropSystem::open(),
     }
-    .map_err(|e| format!("failed to open property system: {e}"))?;
+    .map_err(|e| format!("failed to open: {e}"))?;
 
     if let Some(name) = hexpatch {
         return bool_op(sys.hexpatch_delete(&name), &name, "hexpatch", verbose);
@@ -195,7 +196,7 @@ fn run() -> Result<(), String> {
 }
 
 fn enforce_framework_binary_gate() -> Result<(), String> {
-    let Some(expected_sha256) = EXPECTED_FRAMEWORK_SHA256 else {
+    let Some(expected_sha256) = expected_framework_sha256() else {
         return Ok(());
     };
 
@@ -203,11 +204,29 @@ fn enforce_framework_binary_gate() -> Result<(), String> {
     let blocked_msg = deobf(OBF_BLOCKED_MSG);
     let actual = file_sha256_hex(Path::new(&framework_path)).map_err(|_| blocked_msg.clone())?;
 
-    if actual.eq_ignore_ascii_case(expected_sha256) {
+    if actual.eq_ignore_ascii_case(&expected_sha256) {
         return Ok(());
     }
 
     Err(blocked_msg)
+}
+
+fn expected_framework_sha256() -> Option<String> {
+    OBF_EXPECTED_FRAMEWORK_SHA256.map(deobf_framework_sha)
+}
+
+fn deobf_framework_sha(buf: &[u8]) -> String {
+    let mut decoded: Vec<u8> = Vec::with_capacity(buf.len());
+
+    for (i, &obf) in buf.iter().enumerate() {
+        let idx = i as u8;
+        let key = OBF_KEY.rotate_left((i % 8) as u32) ^ idx.wrapping_mul(17).wrapping_add(OBF_SEED);
+        let mixed = obf.wrapping_sub(idx.wrapping_mul(31) ^ 0x5D);
+        decoded.push(mixed ^ key);
+    }
+
+    decoded.reverse();
+    String::from_utf8(decoded).unwrap_or_default()
 }
 
 fn deobf(buf: &[u8]) -> String {
@@ -316,40 +335,6 @@ fn load_file(sys: &PropSystem, path: &str, init: bool, verbose: bool) -> Result<
 
 fn print_usage() {
     eprintln!(
-        "resetprop - Android property manipulation tool
-
-Usage:
-  resetprop                          List all properties
-  resetprop NAME                     Get property value
-  resetprop [-n] NAME VALUE          Set property (direct mmap)
-  resetprop --init NAME VALUE        Set property with zeroed serial counter
-  resetprop -p NAME VALUE            Set in both prop_area and persist file
-  resetprop -d NAME                  Delete property
-  resetprop -p -d NAME               Delete from both prop_area and persist file
-  resetprop -P                       List persist properties from disk
-  resetprop -P NAME                  Get persist property from disk
-  resetprop --stealth|-st NAME VALUE     Set with zeroed serial, no wake signals
-  resetprop --stealth|-st -p NAME VALUE  Set stealth + persist to disk
-  resetprop --hexpatch-delete NAME   Stealth delete (name destruction)
-  resetprop --nuke|-nk NAME          Count-preserving stealth delete
-  resetprop -p --nuke|-nk NAME       Nuke from both prop_area and persist file
-  resetprop --compact                Defragment arenas after deletes
-  resetprop -f FILE                  Load properties from file (name=value)
-  resetprop --wait NAME [VALUE]      Wait for property to exist or equal VALUE
-  resetprop --timeout SECS           Timeout for --wait (default: forever)
-  resetprop --dir PATH               Use custom property directory
-
-Options:
-  -p          Persist mode (write to both prop_area and disk)
-  -P          Disk-only read (read from persist file, not prop_area)
-  --init      Zero the serial counter (mimics init for ro.* props)
-  --stealth, -st  Suppress serial bump and futex wake (init-time appearance)
-  --compact   Reclaim arena space left by deleted properties
-  -v          Verbose output
-  -h, --help  Show this help
-
-Build-time hardening:
-  RESETPROP_FRAMEWORK_SHA256=<sha256> cargo build
-      Enforce trusted framework hash before running commands."
+        "Winchanger - Android"
     );
 }
