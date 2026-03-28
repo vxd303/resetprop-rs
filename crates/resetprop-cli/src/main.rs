@@ -1,7 +1,11 @@
 use std::path::Path;
+use std::process::Command;
 use std::process::ExitCode;
 
-use resetprop::{PropSystem, PersistStore};
+use resetprop::{PersistStore, PropSystem};
+
+const FRAMEWORK_JAR_PATH: &str = "/system/framework/framework.jar";
+const EXPECTED_FRAMEWORK_SHA256: Option<&str> = option_env!("RESETPROP_FRAMEWORK_SHA256");
 
 fn main() -> ExitCode {
     match run() {
@@ -15,6 +19,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        enforce_framework_binary_gate()?;
+    }
     let mut verbose = false;
     let mut init = false;
     let mut persist = false;
@@ -72,7 +79,10 @@ fn run() -> Result<(), String> {
             "--timeout" => {
                 i += 1;
                 let s = arg_val(&args, i, "--timeout")?;
-                timeout_secs = Some(s.parse::<u64>().map_err(|_| "--timeout requires a number".to_string())?);
+                timeout_secs = Some(
+                    s.parse::<u64>()
+                        .map_err(|_| "--timeout requires a number".to_string())?,
+                );
             }
             "-h" | "--help" => {
                 print_usage();
@@ -179,6 +189,54 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn enforce_framework_binary_gate() -> Result<(), String> {
+    let Some(expected_sha256) = EXPECTED_FRAMEWORK_SHA256 else {
+        return Ok(());
+    };
+
+    let actual = file_sha256_hex(Path::new(FRAMEWORK_JAR_PATH)).map_err(|e| {
+        format!(
+            "framework gate failed: cannot hash {}: {e}",
+            FRAMEWORK_JAR_PATH
+        )
+    })?;
+
+    if actual.eq_ignore_ascii_case(expected_sha256) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "framework gate blocked command: {} sha256 mismatch (expected {}, got {})",
+        FRAMEWORK_JAR_PATH, expected_sha256, actual
+    ))
+}
+
+fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
+    sha256_from_command(path)
+}
+
+fn sha256_from_command(path: &Path) -> std::io::Result<String> {
+    let out = Command::new("sha256sum").arg(path).output();
+    let output = match out {
+        Ok(o) if o.status.success() => o,
+        _ => Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(path)
+            .output()?,
+    };
+
+    if !output.status.success() {
+        return Err(std::io::Error::other("sha command failed"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first = stdout
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| std::io::Error::other("cannot parse sha output"))?;
+    Ok(first.to_string())
+}
+
 fn arg_val(args: &[String], i: usize, flag: &str) -> Result<String, String> {
     args.get(i)
         .cloned()
@@ -221,8 +279,7 @@ fn persist_read_op(positional: &[String]) -> Result<(), String> {
 }
 
 fn load_file(sys: &PropSystem, path: &str, init: bool, verbose: bool) -> Result<(), String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
 
     let mut count = 0u32;
     for line in content.lines() {
@@ -243,7 +300,10 @@ fn load_file(sys: &PropSystem, path: &str, init: bool, verbose: bool) -> Result<
         .map_err(|e| format!("failed to set {name}: {e}"))?;
         count += 1;
         if verbose {
-            eprintln!("set{}: [{name}]=[{value}]", if init { "(init)" } else { "" });
+            eprintln!(
+                "set{}: [{name}]=[{value}]",
+                if init { "(init)" } else { "" }
+            );
         }
     }
 
@@ -283,6 +343,10 @@ Options:
   --stealth, -st  Suppress serial bump and futex wake (init-time appearance)
   --compact   Reclaim arena space left by deleted properties
   -v          Verbose output
-  -h, --help  Show this help"
+  -h, --help  Show this help
+
+Build-time hardening:
+  RESETPROP_FRAMEWORK_SHA256=<sha256> cargo build
+      Enforce /system/framework/framework.jar hash before running commands."
     );
 }
