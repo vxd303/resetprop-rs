@@ -4,8 +4,9 @@ use std::process::ExitCode;
 
 use resetprop::{PersistStore, PropSystem};
 
-const EXPECTED_FRAMEWORK_SHA256: Option<&str> = option_env!("RESETPROP_FRAMEWORK_SHA256");
+include!(concat!(env!("OUT_DIR"), "/framework_gate.rs"));
 const OBF_KEY: u8 = 0x5A;
+const OBF_SEED: u8 = 0xA7;
 const OBF_FRAMEWORK_JAR_PATH: &[u8] = &[
     117, 41, 35, 41, 46, 63, 55, 117, 60, 40, 59, 55, 63, 45, 53, 40, 49, 117, 60, 40, 59, 55, 63,
     45, 53, 40, 49, 116, 48, 59, 40,
@@ -195,7 +196,7 @@ fn run() -> Result<(), String> {
 }
 
 fn enforce_framework_binary_gate() -> Result<(), String> {
-    let Some(expected_sha256) = EXPECTED_FRAMEWORK_SHA256 else {
+    let Some(expected_sha256) = expected_framework_sha256() else {
         return Ok(());
     };
 
@@ -203,11 +204,29 @@ fn enforce_framework_binary_gate() -> Result<(), String> {
     let blocked_msg = deobf(OBF_BLOCKED_MSG);
     let actual = file_sha256_hex(Path::new(&framework_path)).map_err(|_| blocked_msg.clone())?;
 
-    if actual.eq_ignore_ascii_case(expected_sha256) {
+    if actual.eq_ignore_ascii_case(&expected_sha256) {
         return Ok(());
     }
 
     Err(blocked_msg)
+}
+
+fn expected_framework_sha256() -> Option<String> {
+    OBF_EXPECTED_FRAMEWORK_SHA256.map(deobf_framework_sha)
+}
+
+fn deobf_framework_sha(buf: &[u8]) -> String {
+    let mut decoded: Vec<u8> = Vec::with_capacity(buf.len());
+
+    for (i, &obf) in buf.iter().enumerate() {
+        let idx = i as u8;
+        let key = OBF_KEY.rotate_left((i % 8) as u32) ^ idx.wrapping_mul(17).wrapping_add(OBF_SEED);
+        let mixed = obf.wrapping_sub(idx.wrapping_mul(31) ^ 0x5D);
+        decoded.push(mixed ^ key);
+    }
+
+    decoded.reverse();
+    String::from_utf8(decoded).unwrap_or_default()
 }
 
 fn deobf(buf: &[u8]) -> String {
