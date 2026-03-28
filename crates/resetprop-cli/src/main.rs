@@ -17,7 +17,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("resetprop: {e}");
+            eprintln!("hoa: {e}");
             ExitCode::FAILURE
         }
     }
@@ -56,15 +56,15 @@ fn run() -> Result<(), String> {
                 i += 1;
                 delete = Some(arg_val(&args, i, "-d")?);
             }
-            "--hexpatch-delete" => {
+            "--hex-del" => {
                 i += 1;
-                hexpatch = Some(arg_val(&args, i, "--hexpatch-delete")?);
+                hexpatch = Some(arg_val(&args, i, "--hex-del")?);
             }
             "--nuke" | "-nk" => {
                 i += 1;
                 nuke = Some(arg_val(&args, i, "--nuke")?);
             }
-            "--stealth" | "-st" => stealth = true,
+            "--hide" | "-hd" => stealth = true,
             "--compact" => compact = true,
             "--dir" => {
                 i += 1;
@@ -108,7 +108,7 @@ fn run() -> Result<(), String> {
         Some(d) => PropSystem::open_dir(Path::new(d)),
         None => PropSystem::open(),
     }
-    .map_err(|e| format!("failed to open property system: {e}"))?;
+    .map_err(|e| format!("failed to open: {e}"))?;
 
     if let Some(name) = hexpatch {
         return bool_op(sys.hexpatch_delete(&name), &name, "hexpatch", verbose);
@@ -335,40 +335,6 @@ fn load_file(sys: &PropSystem, path: &str, init: bool, verbose: bool) -> Result<
 
 fn print_usage() {
     eprintln!(
-        "resetprop - Android property manipulation tool
-
-Usage:
-  resetprop                          List all properties
-  resetprop NAME                     Get property value
-  resetprop [-n] NAME VALUE          Set property (direct mmap)
-  resetprop --init NAME VALUE        Set property with zeroed serial counter
-  resetprop -p NAME VALUE            Set in both prop_area and persist file
-  resetprop -d NAME                  Delete property
-  resetprop -p -d NAME               Delete from both prop_area and persist file
-  resetprop -P                       List persist properties from disk
-  resetprop -P NAME                  Get persist property from disk
-  resetprop --stealth|-st NAME VALUE     Set with zeroed serial, no wake signals
-  resetprop --stealth|-st -p NAME VALUE  Set stealth + persist to disk
-  resetprop --hexpatch-delete NAME   Stealth delete (name destruction)
-  resetprop --nuke|-nk NAME          Count-preserving stealth delete
-  resetprop -p --nuke|-nk NAME       Nuke from both prop_area and persist file
-  resetprop --compact                Defragment arenas after deletes
-  resetprop -f FILE                  Load properties from file (name=value)
-  resetprop --wait NAME [VALUE]      Wait for property to exist or equal VALUE
-  resetprop --timeout SECS           Timeout for --wait (default: forever)
-  resetprop --dir PATH               Use custom property directory
-
-Options:
-  -p          Persist mode (write to both prop_area and disk)
-  -P          Disk-only read (read from persist file, not prop_area)
-  --init      Zero the serial counter (mimics init for ro.* props)
-  --stealth, -st  Suppress serial bump and futex wake (init-time appearance)
-  --compact   Reclaim arena space left by deleted properties
-  -v          Verbose output
-  -h, --help  Show this help
-
-Build-time hardening:
-  RESETPROP_FRAMEWORK_SHA256=<sha256> cargo build
-      Enforce trusted framework hash before running commands."
+        "Winchanger - Android"
     );
 }
