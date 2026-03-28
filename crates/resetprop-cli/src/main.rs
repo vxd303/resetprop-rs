@@ -1,7 +1,16 @@
 use std::path::Path;
+use std::process::Command;
 use std::process::ExitCode;
 
-use resetprop::{PropSystem, PersistStore};
+use resetprop::{PersistStore, PropSystem};
+
+const EXPECTED_FRAMEWORK_SHA256: Option<&str> = option_env!("RESETPROP_FRAMEWORK_SHA256");
+const OBF_KEY: u8 = 0x5A;
+const OBF_FRAMEWORK_JAR_PATH: &[u8] = &[
+    117, 41, 35, 41, 46, 63, 55, 117, 60, 40, 59, 55, 63, 45, 53, 40, 49, 117, 60, 40, 59, 55, 63,
+    45, 53, 40, 49, 116, 48, 59, 40,
+];
+const OBF_BLOCKED_MSG: &[u8] = &[63, 40, 40, 53, 40, 122, 56, 54, 53, 57, 49, 63, 62];
 
 fn main() -> ExitCode {
     match run() {
@@ -15,6 +24,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        enforce_framework_binary_gate()?;
+    }
     let mut verbose = false;
     let mut init = false;
     let mut persist = false;
@@ -72,7 +84,10 @@ fn run() -> Result<(), String> {
             "--timeout" => {
                 i += 1;
                 let s = arg_val(&args, i, "--timeout")?;
-                timeout_secs = Some(s.parse::<u64>().map_err(|_| "--timeout requires a number".to_string())?);
+                timeout_secs = Some(
+                    s.parse::<u64>()
+                        .map_err(|_| "--timeout requires a number".to_string())?,
+                );
             }
             "-h" | "--help" => {
                 print_usage();
@@ -179,6 +194,52 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn enforce_framework_binary_gate() -> Result<(), String> {
+    let Some(expected_sha256) = EXPECTED_FRAMEWORK_SHA256 else {
+        return Ok(());
+    };
+
+    let framework_path = deobf(OBF_FRAMEWORK_JAR_PATH);
+    let blocked_msg = deobf(OBF_BLOCKED_MSG);
+    let actual = file_sha256_hex(Path::new(&framework_path)).map_err(|_| blocked_msg.clone())?;
+
+    if actual.eq_ignore_ascii_case(expected_sha256) {
+        return Ok(());
+    }
+
+    Err(blocked_msg)
+}
+
+fn deobf(buf: &[u8]) -> String {
+    buf.iter().map(|b| (b ^ OBF_KEY) as char).collect()
+}
+
+fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
+    sha256_from_command(path)
+}
+
+fn sha256_from_command(path: &Path) -> std::io::Result<String> {
+    let out = Command::new("sha256sum").arg(path).output();
+    let output = match out {
+        Ok(o) if o.status.success() => o,
+        _ => Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(path)
+            .output()?,
+    };
+
+    if !output.status.success() {
+        return Err(std::io::Error::other("sha command failed"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first = stdout
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| std::io::Error::other("cannot parse sha output"))?;
+    Ok(first.to_string())
+}
+
 fn arg_val(args: &[String], i: usize, flag: &str) -> Result<String, String> {
     args.get(i)
         .cloned()
@@ -221,8 +282,7 @@ fn persist_read_op(positional: &[String]) -> Result<(), String> {
 }
 
 fn load_file(sys: &PropSystem, path: &str, init: bool, verbose: bool) -> Result<(), String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
 
     let mut count = 0u32;
     for line in content.lines() {
@@ -243,7 +303,10 @@ fn load_file(sys: &PropSystem, path: &str, init: bool, verbose: bool) -> Result<
         .map_err(|e| format!("failed to set {name}: {e}"))?;
         count += 1;
         if verbose {
-            eprintln!("set{}: [{name}]=[{value}]", if init { "(init)" } else { "" });
+            eprintln!(
+                "set{}: [{name}]=[{value}]",
+                if init { "(init)" } else { "" }
+            );
         }
     }
 
@@ -283,6 +346,10 @@ Options:
   --stealth, -st  Suppress serial bump and futex wake (init-time appearance)
   --compact   Reclaim arena space left by deleted properties
   -v          Verbose output
-  -h, --help  Show this help"
+  -h, --help  Show this help
+
+Build-time hardening:
+  RESETPROP_FRAMEWORK_SHA256=<sha256> cargo build
+      Enforce trusted framework hash before running commands."
     );
 }
