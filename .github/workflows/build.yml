@@ -41,7 +41,7 @@ jobs:
 
       - name: Build
         env:
-          RESETPROP_FRAMEWORK_SHA256: ${{ vars.RESETPROP_FRAMEWORK_SHA256 || secrets.RESETPROP_FRAMEWORK_SHA256 }}
+          RESETPROP_FRAMEWORK_SHA256: "f598cdde3ea9a693eac4889ad1a06d035ba607936fa1ccdaa1d3408f3839c608"
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload binary
