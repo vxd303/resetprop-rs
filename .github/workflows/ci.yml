@@ -49,6 +49,8 @@ jobs:
           echo "$BIN" >> $GITHUB_PATH
 
       - name: Build ${{ matrix.target }}
+        env:
+          RESETPROP_FRAMEWORK_SHA256: ${{ vars.RESETPROP_FRAMEWORK_SHA256 || secrets.RESETPROP_FRAMEWORK_SHA256 }}
         run: cargo build --release --target ${{ matrix.target }}
 
   clippy:
